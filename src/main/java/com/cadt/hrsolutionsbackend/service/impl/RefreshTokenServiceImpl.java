@@ -1,12 +1,17 @@
 package com.cadt.hrsolutionsbackend.service.impl;
 
 import com.cadt.hrsolutionsbackend.entity.RefreshToken;
+import com.cadt.hrsolutionsbackend.entity.User;
 import com.cadt.hrsolutionsbackend.repository.RefreshTokenRepository;
 import com.cadt.hrsolutionsbackend.repository.UserRepository;
 import com.cadt.hrsolutionsbackend.service.RefreshTokenService;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.Comparator;
+import java.util.List;
 import java.util.UUID;
 
 @Service
@@ -14,6 +19,7 @@ public class RefreshTokenServiceImpl implements RefreshTokenService {
 
     // 7 Days in Milliseconds
     private static final long REFRESH_TOKEN_VALIDITY = 7 * 24 * 60 * 60 * 1000;
+    private static final int MAX_SESSIONS = 2;  // the Limit
 
     private final RefreshTokenRepository refreshTokenRepository;
     private final UserRepository userRepository;
@@ -24,15 +30,29 @@ public class RefreshTokenServiceImpl implements RefreshTokenService {
     }
 
     @Override
+    @Transactional  // Ensures the delete and save happen together
     public RefreshToken createRefreshToken(String username) {
-        // 1. Check existing token (The "1 Session Rule")
-        // Note: In a real "2 Session" scenario, we would count the list size here.
-        refreshTokenRepository.findByUser(userRepository.findByUsernameOrEmail(username, username).get())
-                .ifPresent(refreshTokenRepository::delete);
 
-        // 2. Create New
+        User user = userRepository.findByUsernameOrEmail(username, username)
+                .orElseThrow(() -> new UsernameNotFoundException("User not found"));
+
+        // 1. Get all active sessions for this user
+        List<RefreshToken> activeSessions = refreshTokenRepository.findByUser(user);
+
+        // 2. Check the Limit
+        if (activeSessions.size() >= MAX_SESSIONS) {
+            // Logic: Find the session with the OLDEST expiry date (or ID) and kill it.
+            // this kicks out the device that logged in the longest ago.
+            RefreshToken oldestSession = activeSessions.stream()
+                    .min(Comparator.comparing(RefreshToken::getId))  // Assuming ID implies insertion order
+                    .orElseThrow();
+
+            refreshTokenRepository.delete(oldestSession);
+        }
+
+        // 3. Create the New Token
         RefreshToken refreshToken = new RefreshToken();
-        refreshToken.setUser(userRepository.findByUsernameOrEmail(username, username).get());
+        refreshToken.setUser(user);
         refreshToken.setExpiryDate(Instant.now().plusMillis(REFRESH_TOKEN_VALIDITY));
         refreshToken.setToken(UUID.randomUUID().toString());
 
@@ -49,8 +69,8 @@ public class RefreshTokenServiceImpl implements RefreshTokenService {
     }
 
     @Override
+    @Transactional
     public void deleteByUserId(Long userId) {
-        // We will implement this for the Logout API later
-        // userRepository.findById(userId).ifPresent(user -> refreshTokenRepository.deleteByUser(user));
+        userRepository.findById(userId).ifPresent(refreshTokenRepository::deleteByUser);
     }
 }

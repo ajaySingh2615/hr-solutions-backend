@@ -26,9 +26,10 @@ public class RefreshToken {
     @Column(nullable = false)
     private Instant expiryDate;
 
-    // Which user does this token belong to?
-    @OneToOne
-    @JoinColumn(name = "user_id", referencedColumnName = "id")
+    // CHANGED: @OneToOne -> @ManyToOne
+    // One User can have MANY Refresh Tokens (Laptop, Phone)
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_id", referencedColumnName = "id", nullable = false)
     private User user;
 
     // In the future, we can add 'deviceInfo' here (e.g., "Chrome on Windows")
